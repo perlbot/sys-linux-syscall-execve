@@ -30,11 +30,13 @@ BEGIN {
 }
 
 our $ERRNO = 0;
+our $ERRSTR = "";
 
 sub _execve {
   my ($cmd_ptr, $arg_ptr, $env_ptr) = @_;
   my $ret = syscall $execve_syscall, 0+$cmd_ptr, 0+$arg_ptr, 0+$env_ptr;
   $ERRNO = $!; # Preserve this for posterity.
+  $ERRSTR = "$!";
   return $ret;
 }
 
@@ -99,15 +101,32 @@ sub _build_args {
   }
 }
 
-sub exeve {
+sub execve_byref {
   my ($cmd_ref, $args_ref, $env_ref) = @_;
 
   my $_argbuf = _build_args($args_ref//[]);
   my $_envbuf = _build_env($env_ref//{});
 
   my $arg_ptr = get_strptr_int(\$_argbuf);
-  my $buf_ptr = get_strptr_int(\$_envbuf);
+  my $env_ptr = get_strptr_int(\$_envbuf);
   my $cmd_ptr = get_strptr_int($cmd_ref);
+
+  my $ret = _execve($cmd_ptr, $arg_ptr, $env_ptr);
+
+  # If we got here, die.  We couldn't execve for some reason
+  die "Couldn't execve(): $ret, $ERRNO - $ERRSTR";
+}
+
+sub execve_env {
+  my ($cmd, $args_ref, $env_ref) = @_;
+
+  execve_byref(\$cmd, $args_ref, $env_ref);
+}
+
+sub execve {
+  my ($cmd, @args) = @_;
+
+  execve_byref(\$cmd, \@args, \%ENV);
 }
 
 print _build_env({foo => "bar", baz => "1....."});
@@ -131,9 +150,35 @@ Why this weird requirement? It's because I need to preserve that address in orde
 
 =head1 SHOULD I USE THIS
 
-Short answer? No.  Perl's built in exec() is better for every use case that you'll ever have.  Not only is it portable, it handles many more edge cases than you can ever expect this to acknowledge even exist.
+No.  Perl's built in exec() is better for every use case that you'll ever have.  Not only is it portable, it handles many more edge cases than you can ever expect this to acknowledge even exist.
 
-Long answer? Only if you need to restrict the execve() syscall in a Seccomp sandbox.  Maybe if
+This is only if you need to restrict the execve() syscall in a Seccomp sandbox.  There are no other possible uses for this.
+
+=head1 EXPORT_OK
+
+=over 1
+
+=item execve
+
+A simple recreation of perl's exec() but using our internal code to execute everything.   However it will never invoke a shell automatically.  This will pass %ENV to the executed program.
+
+=item execve_env
+
+    execve_env("/path/to/cmd", [arg1, arg2, arg3, ...], {env_var => value, ...});
+
+Lets you setup a custom environment to be passed to the new program.  Useful for sanatizing everything for the new program.
+
+=item execve_byref
+
+    my $cmd = "/path/to/cmd";
+    my $args = [arg1, arg2, arg3, ...];
+    my $env = {env_var => value, ...};
+
+    execve_byref(\$cmd, $args, $env);
+
+This is a special interface, passing the command in as a scalar ref helps ensure that the correct string gets passed by pointer to execve() at the final stage.  This is necessary to be perfectly sure that the correct value is passed to the syscall.
+
+=back
 
 =head1 TODO
 
