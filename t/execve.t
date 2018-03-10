@@ -17,7 +17,7 @@ sub test_exec {
   die "Couldn't fork: $!" unless defined $pid;
 
   if ($pid) {
-    waitpid $pid;
+    waitpid $pid, 0;
     return $?>>8;
   } else {
     execve($cmd);

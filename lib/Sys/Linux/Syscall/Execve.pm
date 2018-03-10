@@ -3,39 +3,37 @@ package Sys::Linux::Syscall::Execve;
 use strict;
 use warnings;
 use Linux::Seccomp qw/syscall_resolve_name/;
-use Encode qw/decode/;
+use Encode qw/encode/;
 use Exporter qw/import/;
+use Config;
 
 our $VERSION = "0.10";
 
 our @EXPORT_OK = qw/execve execve_env execve_byref/;
 
 my $ptr_int_type;
-my $ptr_int_size;
+my $ptr_int_size = $Config{ptrsize};
+
+if ($ptr_int_size == 8) {
+  $ptr_int_type = "Q"; # 64bit pointer size, native endian
+} elsif ($ptr_int_size == 4) {
+  $ptr_int_type = "L"; # 32bit pointer size native endian
+} else {
+  die "Unknown pointer size $ptr_int_size";
+}
+
 my $execve_syscall = syscall_resolve_name('execve');
 my $NULL = 0;
 my $NULL_PTR = pack($ptr_int_type, $NULL);
-
-BEGIN {
-  my $dummy = "dummy";
-
-  my $ptr_str = pack "p",$dummy;
-  $ptr_int_size = length $ptr_str;
-
-  if ($ptr_int_size == 8) {
-    $ptr_int_type = "Q"; # 64bit pointer size, native endian
-  } elsif ($ptr_int_size == 4) {
-    $ptr_int_type = "L"; # 32bit pointer size native endian
-  } else {
-    die "Unknown pointer size $ptr_int_size";
-  }
-}
 
 our $ERRNO = 0;
 our $ERRSTR = "";
 
 sub _execve {
   my ($cmd_ptr, $arg_ptr, $env_ptr) = @_;
+
+#  printf "ptrs, 0x%08X 0x%08X 0x%08X\n\n", $cmd_ptr, $arg_ptr, $env_ptr;
+
   my $ret = syscall $execve_syscall, 0+$cmd_ptr, 0+$arg_ptr, 0+$env_ptr;
   $ERRNO = $!; # Preserve this for posterity.
   $ERRSTR = "$!";
@@ -67,39 +65,45 @@ sub _build_args {
 {
   # Because we have to format things, we have to do some tricks to ensure that perl can't ever garbage collect this data while we might use it.
   my $env_internal;
+  my $env_internal_ptrs;
   sub _build_env {
     my $env_ref = shift;
 
     my $length =()= keys %$env_ref;
 
-    # This weird buffer is also the start of the char *env[] that will be passed to execve()
-    # We're going to put out string data at the end of it, and we're going to need to calculate pointers.
-    $env_internal .= $NULL_PTR x ($length+1);
-
-    my @items = map {decode('utf-8', $_ . '=' . $env_ref->{$_})} keys %$env_ref;
+    my @items = map {encode('utf-8', $_ . '=' . $env_ref->{$_})} keys %$env_ref;
 
     # Start the formatting of things, this is similar to how
     # many C libraries do this.  We take everything and put it in one large buffer
-    $env_internal .= join "\0", @items;
+    $env_internal = join "\0", @items;
     $env_internal .= "\0";
 
     # ok at this point the buffer is setup in place, with all the right lengths of things.
     my $buf_ptr_origin = get_strptr_int(\$env_internal);
-    my $offset = ($length+1) * $ptr_int_size;
+    my $offset = 0;
 
     my @ptrs;
 
+#     printf "START => 0x%08X + %6d => 0x%08X\n", $buf_ptr_origin, $offset, $buf_ptr_origin+$offset;
+
     # This all starts at $buf_ptr_origin, and our strings start at +$offset.
     for my $item (@items) {
+      $buf_ptr_origin = get_strptr_int(\$env_internal);
+#      printf "      => 0x%08X + %6d => 0x%08X (%10d): %s\n", $buf_ptr_origin, $offset, $buf_ptr_origin+$offset, length($item)+1, $item;
       push @ptrs, $buf_ptr_origin+$offset;
       $offset += length($item) + 1; # account for \0 at the end of each string
     }
 
-    my $new_ptrs = join '', map {pack_ptr($_)} @ptrs;
+    push @ptrs, 0;
 
-    substr $env_internal, 0, length($new_ptrs), $new_ptrs;
+    $env_internal_ptrs = join '', map {pack_ptr($_)} @ptrs;
 
-    return $env_internal;
+    my $buf_ptr_origin_new = get_strptr_int(\$env_internal_ptrs);
+#    printf "      => 0x%08X\n", $buf_ptr_origin_new;
+
+#    print unpack("H*", $env_internal_ptrs), "\n";
+
+    return \$env_internal_ptrs;
   }
 }
 
@@ -110,7 +114,7 @@ sub execve_byref {
   my $_envbuf = _build_env($env_ref//{});
 
   my $arg_ptr = get_strptr_int(\$_argbuf);
-  my $env_ptr = get_strptr_int(\$_envbuf);
+  my $env_ptr = get_strptr_int($_envbuf);
   my $cmd_ptr = get_strptr_int($cmd_ref);
 
   my $ret = _execve($cmd_ptr, $arg_ptr, $env_ptr);
@@ -130,8 +134,6 @@ sub execve {
 
   execve_byref(\$cmd, \@args, \%ENV);
 }
-
-print _build_env({foo => "bar", baz => "1....."});
 
 1;
 __END__
