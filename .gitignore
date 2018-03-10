@@ -1,5 +1,5 @@
 jail_root/*
 test.log
 .build
-App-EvalServerAdvanced-*
+Sys-Linux-Syscall-*
 testsandbox

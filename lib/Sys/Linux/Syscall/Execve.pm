@@ -2,11 +2,13 @@ package Sys::Linux::Syscall::Execve;
 
 use strict;
 use warnings;
-use Data::Dumper;
 use Linux::Seccomp qw/syscall_resolve_name/;
 use Encode qw/decode/;
+use Exporter qw/import/;
 
 our $VERSION = "0.10";
+
+our @EXPORT_OK = qw/execve execve_env execve_byref/;
 
 my $ptr_int_type;
 my $ptr_int_size;
