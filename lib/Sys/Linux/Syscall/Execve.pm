@@ -7,7 +7,7 @@ use Encode qw/encode/;
 use Exporter qw/import/;
 use Config;
 
-our $VERSION = "0.10";
+our $VERSION = '0.11';
 
 our @EXPORT_OK = qw/execve execve_env execve_byref/;
 
@@ -57,7 +57,7 @@ sub _get_str_ptr {
 sub _build_args {
   my $arg_ref = shift;
 
-  my $buffer = join '', map {_get_str_ptr($_)} @$arg_ref;
+  my $buffer = join '', map {_get_str_ptr(\$_)} @$arg_ref;
 
   return $buffer . $NULL_PTR; # terminate the char *argv[] with a NULL ptr
 }
